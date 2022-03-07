@@ -1,0 +1,181 @@
+---
+title: "Almond_RandomForest"
+author: "Ryan Almond"
+date: "2/11/2022"
+output: word_document
+---
+
+```{r setup, include=FALSE}
+library(tidyverse)
+library(tidymodels)
+library(ranger) #for random forests
+library(randomForest) #also for random forests
+library(caret)
+library(gridExtra)
+library(vip) #variable importance
+library(skimr)
+```
+
+```{r}
+drug <- read_csv("drug_data-1.csv")
+```
+```{r}
+names(drug) = c("ID", "Age", "Gender", "Education", "Country", "Ethnicity","Nscore", "Escore", "Oscore", "Ascore", "Cscore", "Impulsive", "SS", "Alcohol", "Amphet", "Amyl", "Benzos", "Caff", "Cannabis", "Choc", "Coke", "Crack", "Ecstasy", "Heroin", "Ketamine", "Legalh","LSD", "Meth", "Mushrooms", "Nicotine", "Semer", "VSA")
+
+#str(drug)
+```
+```{r}
+drug[drug == "CL0"] = "No"
+drug[drug == "CL1"] = "No"
+drug[drug == "CL2"] = "Yes"
+drug[drug == "CL3"] = "Yes"
+drug[drug == "CL4"] = "Yes"
+drug[drug == "CL5"] = "Yes"
+drug[drug == "CL6"] = "Yes"
+```
+
+```{r}
+drug_clean = drug %>% mutate_at(vars(Age:Ethnicity), funs(as_factor)) %>%
+  mutate(Age = factor(Age, labels = c("18_24", "25_34", "35_44","45_54", "55_64", "65_"))) %>%
+  mutate(Gender = factor(Gender, labels = c("Male", "Female"))) %>%
+  mutate(Education = factor(Education, labels = c("Under16", "At16", "At17", "At18", "SomeCollege","ProfessionalCert", "Bachelors", "Masters", "Doctorate"))) %>%
+  mutate(Country = factor(Country,labels = c("USA", "NewZealand", "Other", "Australia","Ireland","Canada","UK"))) %>%
+  mutate(Ethnicity = factor(Ethnicity,labels = c("Black", "Asian", "White", "White/Black", "Other","White/Asian", "Black/Asian"))) %>%
+  mutate_at(vars(Alcohol:VSA), funs(as_factor)) %>%
+  select(-ID)
+```
+```{r}
+#str(drug_clean)
+```
+```{r}
+drug_clean = drug_clean %>% select(!(Alcohol:Mushrooms)) %>% select(!(Semer:VSA))
+names(drug_clean)
+```
+```{r}
+skim(drug_clean)
+```
+
+According to the above skim there is no missingness.
+
+```{r}
+set.seed(1234) 
+drug_split = initial_split(drug_clean, prop = 0.7, strata = Nicotine) #70% in training
+train = training(drug_split) 
+test = testing(drug_split)
+```
+
+```{r}
+p1 = ggplot(train,aes(x=Age,fill=Nicotine)) + geom_bar(position = "fill")+scale_x_discrete(guide = guide_axis(n.dodge=3))
+p2 = ggplot(train,aes(x=Gender,fill=Nicotine)) + geom_bar(position = "fill")
+p3 = ggplot(train,aes(x=Education,fill=Nicotine)) + geom_bar(position = "fill")+scale_x_discrete(guide = guide_axis(n.dodge=3))
+p4 = ggplot(train,aes(x=Country,fill=Nicotine)) + geom_bar(position = "fill")+scale_x_discrete(guide = guide_axis(n.dodge=3))
+p5 = ggplot(train,aes(x=Ethnicity,fill=Nicotine)) + geom_bar(position = "fill")+scale_x_discrete(guide = guide_axis(n.dodge=3))
+p6 = ggplot(train,aes(x=Nicotine,y=Nscore)) + geom_boxplot() + geom_jitter(alpha = 0.02) + theme_bw()
+p7 = ggplot(train,aes(x=Nicotine,y=Escore)) + geom_boxplot() + geom_jitter(alpha = 0.02) + theme_bw()
+p8 = ggplot(train,aes(x=Nicotine,y=Oscore)) + geom_boxplot() + geom_jitter(alpha = 0.02) + theme_bw()
+p9 = ggplot(train,aes(x=Nicotine,y=Ascore)) + geom_boxplot() + geom_jitter(alpha = 0.02) + theme_bw()
+p10 = ggplot(train,aes(x=Nicotine,y=Cscore)) + geom_boxplot() + geom_jitter(alpha = 0.02) + theme_bw()
+p11 = ggplot(train,aes(x=Nicotine,y=Impulsive)) + geom_boxplot() + geom_jitter(alpha = 0.02) + theme_bw()
+p12 = ggplot(train,aes(x=Nicotine,y=SS)) + geom_boxplot() + geom_jitter(alpha = 0.02) + theme_bw()
+grid.arrange(p1,p2,p3,p4, ncol = 2) #arranging ggplot objects in a grid
+grid.arrange(p5,p6,p7,p8, ncol = 2) #arranging ggplot objects in a grid
+grid.arrange(p9,p10,p11,p12, ncol = 2) #arranging ggplot objects in a grid
+```
+```{r}
+set.seed(123)
+rf_folds = vfold_cv(train, v = 5)
+```
+
+Random forest with an R-defined tuning grid (this model took about 5 minutes to run)
+```{r}
+drug_recipe = recipe(Nicotine ~., train) %>%
+  step_dummy(all_nominal(), -all_outcomes())
+
+rf_model = rand_forest(mtry = tune(), min_n = tune(), trees = 100) %>% 
+  set_engine("ranger", importance = "permutation") %>% 
+  set_mode("classification")
+
+drug_wflow = 
+  workflow() %>% 
+  add_model(rf_model) %>% 
+  add_recipe(drug_recipe)
+
+rf_grid = grid_regular(
+  mtry(range = c(2, 8)),
+  min_n(range = c(5, 20)), 
+  levels = 10
+)
+
+set.seed(123)
+rf_res_tuned = tune_grid(
+  drug_wflow,
+  resamples = rf_folds,
+  grid = rf_grid #use the tuning grid
+)
+```
+
+```{r}
+rf_res_tuned %>%
+  collect_metrics() %>%
+  filter(.metric == "accuracy") %>%
+  select(mean, min_n, mtry) %>%
+  pivot_longer(min_n:mtry,
+    values_to = "value",
+    names_to = "parameter"
+  ) %>%
+  ggplot(aes(value, mean, color = parameter)) +
+  geom_point(show.legend = FALSE) +
+  facet_wrap(~parameter, scales = "free_x") +
+  labs(x = NULL, y = "Accuracy")
+```
+
+```{r}
+rf_res_tuned %>%
+  collect_metrics() %>%
+  filter(.metric == "accuracy") %>%
+  mutate(min_n = factor(min_n)) %>%
+  ggplot(aes(mtry, mean, color = min_n)) +
+  geom_line(alpha = 0.5, size = 1.5) +
+  geom_point() +
+  labs(y = "Accuracy")
+```
+
+```{r}
+best_rf = select_best(rf_res_tuned, "accuracy")
+
+final_rf = finalize_workflow(
+  drug_wflow,
+  best_rf
+)
+
+final_rf
+```
+```{r}
+#fit the finalized workflow to our training data
+final_rf_fit = fit(final_rf, train)
+```
+```{r}
+final_rf_fit %>% pull_workflow_fit() %>% vip(geom = "point")
+```
+
+We can see that SS(sensation seeing measured by ImpSS),Country_UK,Age_X45_54,Nscore(NEO-FFI-R Neuroticism),Impulsive(impulsiveness measured by BIS-11),Oscore(NEO-FFI-R Openness to experience) are the most important.
+
+```{r}
+trainpredrf = predict(final_rf_fit, train)
+head(trainpredrf)
+confusionMatrix(trainpredrf$.pred_class, train$Nicotine, 
+                positive = "Yes")
+```
+
+It works great on the training set with an accuracy of 0.9416.  
+
+```{r}
+testpredrf = predict(final_rf_fit, test)
+head(testpredrf)
+confusionMatrix(testpredrf$.pred_class, test$Nicotine, 
+                positive = "Yes")
+```
+
+It is not quite as good on the test set but still decent with an accuracy of 0.709.  
+
+I think that it can be used to see who to target for potential rehabilitation and education. We can see with this specifically with nicotine and a lot of younger people and specific race groups that could be targeted. People who fall on specific sections of the questionnaires and exams can also be targeted. This was only nicotine which is definitely on the lower end of harm compared to the other drugs in the original data set. The other drugs can follow the same thing we did here to see who is the most at risk and try to take preventative actions. I personally do not like putting people into specific categories and targeting them because of the category since there are definite outliers. If we are talking about drugs as a whole there is a stigma around them that makes it harder for people to seek help and I think models such as this would only further it. To make an actual change on drug usage there needs to be systemic change. We are already 0-1 on the war on drugs.

@@ -1,0 +1,158 @@
+---
+title: "Almond_ClusterAssign"
+author: "Ryan Almond"
+date: "2/28/2022"
+output: word_document
+---
+
+```{r setup, include=FALSE}
+library(tidyverse)
+library(tidymodels)
+library(cluster) #algorithms for clustering
+```
+
+```{r}
+trucks <- read_csv("trucks.csv")
+```
+
+```{r}
+ggplot(trucks, aes(Distance, Speeding)) +
+  geom_point(alpha = 0.4) + theme_bw()
+```
+
+There appears to be some natural clustering of drivers. Big cluster around the 50 milage distance for drivers not speeding very often and another around the 150-200 mileage range and under 25% speeding. There is another potential cluster for that same distance but a fair amount of drivers speeding more then 50%. A lot more people drive a much shorter distance and typically speed less often.  
+
+```{r}
+kmeans_recipe = recipe(~ Speeding + Distance, trucks) 
+
+trucks_dummy = kmeans_recipe %>% 
+  step_scale(all_numeric()) %>%
+  step_center(all_numeric()) 
+
+trucks_dummy = prep(trucks_dummy, trucks) #prepares the recipe
+
+trucks_cleaned = bake(trucks_dummy, trucks) #applies the recipe and yields a data frame
+```
+
+```{r}
+set.seed(64)
+clusts = 
+  tibble(k = 2) %>%
+  mutate(
+    kclust = map(k, ~kmeans(trucks_cleaned, .x)),
+    tidied = map(kclust, tidy),
+    glanced = map(kclust, glance),
+    augmented = map(kclust, augment, trucks_cleaned)
+  )
+
+clusts
+```
+
+```{r}
+clusters = 
+  clusts %>%
+  unnest(cols = c(tidied))
+
+assignments = 
+  clusts %>% 
+  unnest(cols = c(augmented))
+
+clusterings = 
+  clusts %>%
+  unnest(cols = c(glanced))
+```
+
+
+```{r}
+p1 = 
+  ggplot(assignments, aes(x = Distance, y = Speeding)) +
+  geom_point(aes(color = .cluster), alpha = 0.8) + 
+  facet_wrap(~ k)
+p1
+```
+
+The clusters line up to people who either do not drive very far and people who drive much further. This lines up to what I would image two clusters would be.
+
+```{r}
+set.seed(412)
+clusts = 
+  tibble(k = 1:8) %>%
+  mutate(
+    kclust = map(k, ~kmeans(trucks_cleaned, .x)),
+    tidied = map(kclust, tidy),
+    glanced = map(kclust, glance),
+    augmented = map(kclust, augment, trucks_cleaned)
+  )
+
+clusts
+```
+
+```{r}
+clusters = 
+  clusts %>%
+  unnest(cols = c(tidied))
+
+assignments = 
+  clusts %>% 
+  unnest(cols = c(augmented))
+
+clusterings = 
+  clusts %>%
+  unnest(cols = c(glanced))
+```
+
+```{r}
+p1 = 
+  ggplot(assignments, aes(x = Distance, y = Speeding)) +
+  geom_point(aes(color = .cluster), alpha = 0.8) + 
+  facet_wrap(~ k)
+p1
+```
+
+I think 4 clusters is the right number for what we want to see.  
+
+```{r}
+ggplot(clusterings, aes(k, tot.withinss)) +
+  geom_line() +
+  geom_point()
+```
+
+A k value of 3 or 4 seems to be the best for this data. I am going to continue with 4 though based on visualization earlier. 
+
+```{r}
+set.seed(64)
+clusts = 
+  tibble(k = 4) %>%
+  mutate(
+    kclust = map(k, ~kmeans(trucks_cleaned, .x)),
+    tidied = map(kclust, tidy),
+    glanced = map(kclust, glance),
+    augmented = map(kclust, augment, trucks_cleaned)
+  )
+
+clusts
+```
+
+```{r}
+clusters = 
+  clusts %>%
+  unnest(cols = c(tidied))
+
+assignments = 
+  clusts %>% 
+  unnest(cols = c(augmented))
+
+clusterings = 
+  clusts %>%
+  unnest(cols = c(glanced))
+```
+
+```{r}
+p2 = 
+  ggplot(assignments, aes(x = Distance, y = Speeding)) +
+  geom_point(aes(color = .cluster), alpha = 0.8) + 
+  facet_wrap(~ k)
+p2
+```
+
+The clusters that result here are about what I thought when I visualized the relationship early on without clusters present.  
